@@ -1,9 +1,3 @@
-##########---To do-------#########
-#-----Save the metrics and add a plot of the correlation over epoch--- likewisee losses
-### Compare tsne of the input and the latent
-##########################
-
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -16,6 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.stats import pearsonr
 from sklearn.manifold import TSNE
+
 
 
 class VAE(nn.Module):
@@ -69,9 +64,8 @@ class VAE(nn.Module):
     def forward(self, x):
         mu, logvar = self.encode(x)
         z = self.reparameterize(mu, logvar)
-        logvar_tanh = torch.tanh(logvar) 
         output = self.decode(z)
-        return output, mu, logvar_tanh
+        return output, mu, logvar
 
 
 
@@ -86,9 +80,8 @@ def create_dataloader(train_tensor, batch_size):
 
 def kl_divergence(mu, logvar):
     # -0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
+    return 0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
 
-    return (0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())/1900
-)
 
 def pearson_correlation(x, y):
     vx = x - np.mean(x)
@@ -139,7 +132,6 @@ vae = VAE(input_dim, latent_dim)
 vae = vae.to(device)
 print("loading completed")
 reconstruction_loss = nn.MSELoss()
-kl_div_loss = nn.KLDivLoss(reduction="batchmean")
 optimizer = optim.Adam(vae.parameters(), lr=learning_rate)
 dataloader = create_dataloader(train_tensor, batch_size)
 prev_correlation = -1.0
@@ -161,13 +153,10 @@ for epoch in range(num_epochs):
 
 
         recon_loss = reconstruction_loss(output, batch_data)
-        # kl_loss = kl_divergence(mu, logvar)
-        kl_loss = kl_div_loss(mu, logvar)
-        
-        # print(f'mu_min:{mu.min()},mu_max:{mu.max()},logvar_min:{logvar.min()},logvar_max:{logvar.max()}')
+        kl_loss = kl_divergence(mu, logvar)
 
         # Combined loss
-        combined_loss = recon_loss + 0.5 * kl_loss
+        combined_loss = recon_loss
 
         # Backward pass and optimization
         combined_loss.backward()
@@ -184,10 +173,8 @@ for epoch in range(num_epochs):
 
     # After all batches are processed, compute correlation over the entire dataset
     reconstructed_data = torch.cat(reconstructed_data, dim=0)
-    
     reconstructed_data =reconstructed_data.cpu()
     reconstructed_data = reconstructed_data.numpy()
-    print('good')
     epoch_correlation = pearson_correlation(reconstructed_data, train_tensor.numpy())
     # Print epoch statistics
     epoch_recon_loss = running_recon_loss / len(dataloader)
@@ -198,7 +185,7 @@ for epoch in range(num_epochs):
         learning_rate= learning_rate *0.1
 
     if epoch_correlation > prev_correlation:
-        torch.save(vae.state_dict(), '/mnt/data/macaulay/datas/vae_expression_without_five.txt.pth')
+        torch.save(vae.state_dict(), '/mnt/data/macaulay/datas/vae_expression.pth')
 
         embeddings_array = np.concatenate(embeddings_list)
         df_embeddings = pd.DataFrame(embeddings_array)
@@ -206,7 +193,11 @@ for epoch in range(num_epochs):
         df_embeddings = pd.concat([cell_line_names, df_embeddings], axis=1) #join the cell line names to the embeddings
         df_embeddings.to_csv(f'/mnt/data/macaulay/datas/OmicExpression_embeddings/OmicExpression_embeddings_{epoch}.csv', index=False)
         prev_coorelation = epoch_correlation
-
+    # val_data = val_tensor.to(device)
+    # output, mu, logvar = vae(val_data)
+    # val_corr = pearson_correlation(output.detach().numpy(),val_tensor.numpy())
+    # del val_data
+    #torch.empty_cache()
 
     print("Epoch [{}/{}],learning_rate{}, Combined Training Loss: {:.4f}, Reconstruction Loss: {:.4f}, KL Loss: {:.4f}, Train Correlation: {:.4f}".format(epoch + 1,num_epochs,learning_rate,epoch_combined_loss,epoch_recon_loss, epoch_kl_loss,epoch_correlation))
     with open('/mnt/data/macaulay/datas/vae_metrics_without_five.txt', 'a') as f:
@@ -214,10 +205,11 @@ for epoch in range(num_epochs):
             f.write('Epoch,Combined Training Loss,Reconstruction Loss,KL Loss,Train Correlation\n')
         f.write(f'{epoch + 1},{epoch_combined_loss},{epoch_recon_loss},{epoch_kl_loss},{epoch_correlation}\n')
 
+
 plt.plot(num_epochs + 1, epoch_recon_loss, label='Combined Training Loss')
 plt.plot(num_epochs + 1, epoch_kl_loss, label='KL Divergence')
 plt.xlabel('Epoch')
 plt.ylabel('Loss')
 plt.title('Training Loss Curves')
 plt.legend()
-plt.savefig('/mnt/data/macaulay/plot_images/vae_loss_curve_without_five.txt.png')
+plt.savefig('/mnt/data/macaulay/plot_images/vae_loss_curve.png')

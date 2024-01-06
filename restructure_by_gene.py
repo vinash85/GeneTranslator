@@ -44,7 +44,7 @@ def cartesian_product(data1, data2):
     data1['key'] = 1
     data2['key'] = 1
     combined_data = pd.merge(data1, data2, on='key').drop(columns=['key'])
-    print(len(combined_data))
+    # print(len(combined_data))
     
     return combined_data
 
@@ -59,17 +59,13 @@ def cartesian_product_generator(data1, data2, df_Y, batch_size1):
         yield batch_X, batch_Y
 
 def load_model(model, epoch, model_save_path):
-    m_counter = 0
     model_path = os.path.join(model_save_path, f'crispr_fc1_model_state_epoch_{epoch-1}.pth')
+
     if os.path.exists(model_path):
         model.load_state_dict(torch.load(model_path))
-        if m_counter == 0:
-            print(f'Model {epoch - 1} loaded successfully for epoch {epoch}')
-            m_counter += 1
+        print(f'Model {epoch - 1} loaded successfully for epoch {epoch}')
     else:
-        if m_counter == 0:
-            print('No saved model found. Training from scratch.')
-            m_counter += 1
+        print('No saved model found. Training from scratch.')
     return model
 
 
@@ -103,56 +99,75 @@ def main_training_loop(data1_path, data2_path, df_Y_path,
     start_epoch = last_epoch + 1
     end_epoch = start_epoch + num_epochs
 
+
+    gene_predictions = {}
+    gene_actuals = {}
+
+
+
     for epoch in range(start_epoch, end_epoch):
         max_index = (len(data1) // batch_size1) * batch_size1
         # print(max_index)
         # # time.sleep(10000)
+        max_index = 50 
 
         epoch_train_correlations = []
         epoch_train_losses = []
         epoch_test_correlations = []
         epoch_test_losses = []
-
+        test_counter = 0
         for j in range(0, max_index, batch_size1):
             batched_data1 = data1.iloc[j:j+batch_size1]
             model.train()
-            model = load_model(model, epoch, model_save_path)
-            train_correlations = []
-            train_lossess = []
-            test_correlations = []
-            test_lossess = []
+            if j == 0:
+                model = load_model(model, epoch, model_save_path)
+
             for batch_X, batch_Y in cartesian_product_generator(batched_data1, data2, df_Y, batch_size1):
                 
                 # Concatenate X and Y DataFrames along the columns axis
                 combined = pd.concat([batch_X.reset_index(drop=True), batch_Y.reset_index(drop=True)], axis=1)            
 
                 # Shuffle data
-                #combined = combined.sample(frac=1).reset_index(drop=True)
-                # display(shuffled_combined)
-                # print('shuffled')
-                # time.sleep(1000)
+                combined = combined.sample(frac=1, random_state=42).reset_index(drop=True)
+                
+                
+
 
                 # Split shuffled data back into X and Y
                 shuffled_X = combined.iloc[:, :-batch_Y.shape[1]]
                 shuffled_Y = combined.iloc[:, -batch_Y.shape[1]:]
 
                 # Then use train_test_split to split the shuffled data into training and test sets
-                X_train, X_test, Y_train, Y_test = train_test_split(shuffled_X, shuffled_Y, test_size=0.1, shuffle=False)
-                # display(X_test)
-                # display(Y_test)
+                X_train, X_test, Y_train, Y_test = train_test_split(shuffled_X, shuffled_Y, test_size=0.05, shuffle=False)
+                # print(X_train)
+                # print(X_train.shape)
+                # print(X_train['Gene'].unique())
+                # if test_counter // 50 == 0:
+                #     print(f'Gene {j}')
+                if epoch == 1:
+                    file_name_X = f'X_test_{test_counter}.csv'
+                    file_path_X = os.path.join(model_save_path, file_name_X)
+                    file_name_Y = f'Y_test_{test_counter}.csv'
+                    file_path_Y = os.path.join(model_save_path, file_name_Y)
+                    X_test.to_csv(file_path_X, index=False)
+                    Y_test.to_csv(file_path_Y, index=False)
+                    X_train = X_train.drop(columns=["Gene"])
+                    
+                    test_counter += 1
+                else:
+                    file_name_X = f'X_test_{test_counter}.csv'
+                    file_path_X = os.path.join(model_save_path, file_name_X)
+                    X_test = pd.read_csv(file_path_X)
+                    file_name_Y = f'Y_test_{test_counter}.csv'
+                    file_path_Y = os.path.join(model_save_path, file_name_Y)
+                    Y_test = pd.read_csv(file_path_Y)
+                    X_train = X_train.drop(columns=["Gene"])
+                    
+                    test_counter += 1
 
-                # Copy gene name
-                batch_gene_name = X_test['Gene'].iloc[0]
-                print(batch_gene_name)
-                X_train = X_train.drop(columns=["Gene"])
-                X_test = X_test.drop(columns=["Gene"])
 
-                # print(X_train.select_dtypes(include=['object']).head())
-                # display(X_test)
-                # # display(Y_train)
-                # display(Y_test)
-                # import time
-                
+                # import sys
+                # sys.exit('stop')
                 # Convert training data to tensor and create dataloader
                 X_train_tensor = torch.tensor(X_train.values, dtype=torch.float32).to(device)
                 Y_train_tensor = torch.tensor(Y_train.values.reshape(-1, 1), dtype=torch.float32).to(device)
@@ -160,6 +175,7 @@ def main_training_loop(data1_path, data2_path, df_Y_path,
                 train_dataloader = DataLoader(train_data, batch_size=128, shuffle=True)
                 
                 train_loss = 0.0
+                train_correlations_b = []
                 for inputs, targets in train_dataloader:
                     inputs, targets = inputs.to(device), targets.to(device)
                     optimizer.zero_grad()
@@ -171,13 +187,18 @@ def main_training_loop(data1_path, data2_path, df_Y_path,
                     train_predictions_np = outputs.detach().cpu().numpy()
                     Y_train_np = targets.cpu().numpy()
                     train_correlation, _ = pearsonr(train_predictions_np.squeeze(), Y_train_np.squeeze())
-                    train_correlations.append(train_correlation)
-                    train_lossess.append(loss.item())
+                    train_correlations_b.append(train_correlation)
+                    # train_lossess.append(loss.item())
+                epoch_train_losses.append(train_loss / len(train_dataloader))
+                epoch_train_correlations.append(np.mean(train_correlations_b))
+
+
 
                 # Evaluate on test data
                 model.eval()
                 with torch.no_grad():
-                    X_test_tensor = torch.tensor(X_test.values, dtype=torch.float32).to(device)
+                    # Convert test data to tensor and evaluate
+                    X_test_tensor = torch.tensor(X_test.drop(columns=["Gene"]).values, dtype=torch.float32).to(device)
                     Y_test_tensor = torch.tensor(Y_test.values.reshape(-1, 1), dtype=torch.float32).to(device)
                     predictions = model(X_test_tensor)
                     test_loss = loss_fn(predictions, Y_test_tensor)
@@ -187,39 +208,48 @@ def main_training_loop(data1_path, data2_path, df_Y_path,
                     Y_test_np = Y_test_tensor.cpu().numpy()
                     
                     correlation, _ = pearsonr(predictions_np.squeeze(), Y_test_np.squeeze())
-                    test_correlations.append(correlation)
-                    test_lossess.append(test_loss.item())
-            
-            mean_train_correlation = np.mean(train_correlations)
-            mean_train_loss = np.mean(train_lossess)
-            mean_test_correlation = np.mean(test_correlations)
-            mean_test_loss = np.mean(test_lossess)
+                    epoch_test_correlations.append(correlation)
+                    epoch_test_losses.append(test_loss.item())
 
-            epoch_train_correlations.append(mean_train_correlation)
-            epoch_train_losses.append(mean_train_loss)
-            epoch_test_correlations.append(mean_test_correlation)
-            epoch_test_losses.append(mean_test_loss)
+                    # Aggregate predictions and actual values for each gene
+                    for gene in X_test['Gene'].unique():
+                        gene_mask = (X_test['Gene'] == gene)
+                        X_test_gene = X_test[gene_mask]
+                        Y_test_gene = Y_test[gene_mask]
 
-            if j//500 == 0:
+                        X_test_tensor = torch.tensor(X_test_gene.drop(columns=["Gene"]).values, dtype=torch.float32).to(device)
+                        Y_test_tensor = torch.tensor(Y_test_gene.values.reshape(-1, 1), dtype=torch.float32).to(device)
 
-                print(f"Epoch {epoch}.{j}: Training Pearson correlation = {mean_train_correlation:.4f}")
-                print(f"Epoch {epoch}.{j}.{batch_gene_name}: Pearson correlation = {mean_test_correlation:.4f}")
+                        predictions_gene = model(X_test_tensor)
 
-            with open(os.path.join(model_save_path, f'metrics_by_gene.txt'), 'a') as f:
+                        predictions_gene_np = predictions_gene.cpu().numpy().squeeze()
+                        Y_test_gene_np = Y_test_tensor.cpu().numpy().squeeze()
+                        gene_predictions[gene] = gene_predictions.get(gene, []) + predictions_gene_np.tolist()
+                        gene_actuals[gene] = gene_actuals.get(gene, []) + Y_test_gene_np.tolist()
+
+                # Calculate Pearson correlation for each gene
+                gene_correlations = {}
+                for gene in gene_predictions.keys():
+                    correlation, _ = pearsonr(gene_predictions[gene], gene_actuals[gene])
+                    gene_correlations[gene] = correlation
+
+        # Print or save gene correlations
+        for gene, corr in gene_correlations.items():
+            print(f"Gene {gene}: Pearson Correlation = {corr:.4f}")
+
+            with open(os.path.join(model_save_path, f'gene_correlations.txt'), 'a') as f:
                 if epoch == 1:
-                    f.write('Epoch,Gene,gene_correlation\n')
-                f.write(f'Epoch{epoch},{batch_gene_name},{mean_test_correlation:.4f}\n')
-              
+                    f.write('Epoch,gene,correlation\n')
+                f.write(f'Epoch{epoch},{gene},{corr:.4f}\n')
+                   
 
-
-        print(f"Epoch {epoch}: Avg. training loss = {np.mean(epoch_train_losses):.4f}, Training Pearson correlation = {np.mean(epoch_train_correlations):.4f}")
-        print(f"Epoch {epoch}: Test loss = {np.mean(epoch_test_losses):.4f}, Pearson correlation = {np.mean(epoch_test_correlations):.4f}")
-
+        # Save model state and metrics
         torch.save(model.state_dict(), os.path.join(model_save_path, f'crispr_fc1_model_state_epoch_{epoch}.pth'))
         with open(os.path.join(model_save_path, f'metrics.txt'), 'a') as f:
             if epoch == 1:
                 f.write('epoch,train_loss,train_correlation,test_loss,test_correlation\n')
             f.write(f'{epoch},{np.mean(epoch_train_losses):.4f},{np.mean(epoch_train_correlations):.4f},{np.mean(epoch_test_losses):.4f},{np.mean(epoch_test_correlations):.4f}\n')
+        print(f'Epoch {epoch} completed')
 
 
 
@@ -236,7 +266,9 @@ main_training_loop(data1_path="/mnt/data/macaulay/datas/training_gene_embeddings
                    data1_test_path_C="/mnt/data/macaulay/datas/test_gene_embeddings.csv",
                    data2_test_path_C="/mnt/data/macaulay/datas/test_omicExpression_Embeddings.csv",
                    df_Y_test_path_C='/mnt/data/macaulay/datas/C_test_gene__Y_crispr.csv',
-                   batch_size1=1,learning_rate=0.001,num_epochs=10,
+                   batch_size1=1,learning_rate=0.001,num_epochs=6,
                    model_save_path='/home/macaulay/macaulay/GenePedia/datas/',test_batch_size=128)
 
-   
+                #    model_save_path='/mnt/data/macaulay/datas/model_datas/',test_batch_size=128)
+
+# model_save_path='/home/macaulay/macaulay/GenePedia/datas/',test_batch_size=128)

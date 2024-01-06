@@ -106,7 +106,8 @@ class FullConnectedBlock(nn.Module):
         if self.use_residual and self.in_channels == self.out_channels:
             out += residual
         return out
-
+#TRY dropout before relu
+#try to remove relu
 
 class NeuralNetwork(nn.Module):
 

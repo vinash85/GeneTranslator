@@ -1,6 +1,6 @@
 ##########---To do-------#########
 #-----Save the metrics and add a plot of the correlation over epoch--- likewisee losses
-### Compare tsne of the input and the latent
+
 ##########################
 
 
